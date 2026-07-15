@@ -73,4 +73,37 @@ function ConvertFrom-AudiobookMarkdown {
     return $text
 }
 
-Export-ModuleMember -Function Assert-AudiobookSource, Get-PronunciationMap, ConvertFrom-AudiobookMarkdown
+function Get-Mp3Metadata {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$FfprobePath
+    )
+
+    $json = & $FfprobePath -v error -show_entries format=format_name,duration,bit_rate `
+        -show_entries stream=channels -of json -- $Path
+    if ($LASTEXITCODE -ne 0) { throw "ffprobe не смог проверить файл: $Path" }
+    $probe = $json | ConvertFrom-Json
+    return [pscustomobject]@{
+        FormatName = [string]$probe.format.format_name
+        Channels = [int]$probe.streams[0].channels
+        DurationSeconds = [double]::Parse(
+            [string]$probe.format.duration,
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+        BitRate = [int64]$probe.format.bit_rate
+    }
+}
+
+function Assert-Mp3Metadata {
+    param([Parameter(Mandatory)][psobject]$Metadata)
+
+    if ($Metadata.FormatName -notmatch '(^|,)mp3($|,)') { throw 'Ожидался формат MP3' }
+    if ($Metadata.Channels -ne 1) { throw 'Ожидался один звуковой канал' }
+    if ($Metadata.DurationSeconds -le 0) { throw 'Длительность должна быть больше нуля' }
+    if ($Metadata.BitRate -lt 88000 -or $Metadata.BitRate -gt 104000) {
+        throw 'Некорректный битрейт'
+    }
+}
+
+Export-ModuleMember -Function Assert-AudiobookSource, Get-PronunciationMap, `
+    ConvertFrom-AudiobookMarkdown, Get-Mp3Metadata, Assert-Mp3Metadata
