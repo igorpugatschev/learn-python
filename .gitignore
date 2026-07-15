@@ -441,7 +441,3 @@ materials/book_raw.md
 
 # Isolated feature worktrees
 .worktrees/
-
-# Locally generated audiobook files
-audiobook/output/
-audiobook/tmp/
