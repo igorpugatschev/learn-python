@@ -99,3 +99,87 @@ Passed: 6 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
 ## Concerns
 
 - The brief does not add direct tests for `Get-Mp3Metadata`, invalid format, non-positive duration, ffprobe failure, or bitrate boundaries. The implementation follows the exact supplied code and interfaces, but those paths remain untested by this task's prescribed suite.
+
+## Fix After Review
+
+### Test Updates
+
+- Replaced the valid metadata test's `Should Not Throw` wrapper with direct `Assert-Mp3Metadata -Metadata $metadata` invocation. An undefined or renamed function now fails the test directly.
+- Added validation tests for invalid format, non-positive duration, and accepted 88,000 and 104,000 bit/s boundaries.
+- Added `Get-Mp3Metadata` tests using real temporary PowerShell probe scripts in `$TestDrive`: JSON normalization and non-zero exit handling.
+
+### Initial Expanded Run
+
+Command:
+
+```powershell
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1
+```
+
+Result:
+
+```text
+Passed: 11 Failed: 1 Skipped: 0 Pending: 0 Inconclusive: 0
+```
+
+The JSON normalization fixture initially ended without an explicit process exit code. Under the module's `Set-StrictMode`, `$LASTEXITCODE` was unset and the parser failed before normalization. The real probe fixture was corrected to emit the JSON and `exit 0`; production code was not changed.
+
+### Mutation Evidence
+
+Temporary mutation: renamed production `Assert-Mp3Metadata` to `Assert-Mp3Metadata_Mutated` while leaving the export and test calls unchanged. The mutation was not committed.
+
+Command:
+
+```powershell
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1 -TestName 'Assert-Mp3Metadata'
+```
+
+Result:
+
+```text
+Describing Assert-Mp3Metadata
+ [-] accepts a valid mono 96 kbps MP3
+   CommandNotFoundException: The term 'Assert-Mp3Metadata' is not recognized as a name of a cmdlet, function, script file, or executable program.
+ [-] rejects stereo output
+ [-] rejects an out-of-range bitrate
+ [-] rejects a non-MP3 format
+ [-] rejects a non-positive duration
+ [-] accepts the lower bitrate boundary
+ [-] accepts the upper bitrate boundary
+Tests completed in 474ms
+Passed: 0 Failed: 7 Skipped: 0 Pending: 0 Inconclusive: 0
+```
+
+The production function name was restored immediately after this run.
+
+### Final GREEN / Pristine Result
+
+Command:
+
+```powershell
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1
+```
+
+Result:
+
+```text
+Describing ConvertFrom-AudiobookMarkdown
+ [+] removes front matter, fenced code, URLs, and Markdown markers
+ [+] rejects unresolved OCR markers
+ [+] rejects a source with no narratable text
+Describing Assert-Mp3Metadata
+ [+] accepts a valid mono 96 kbps MP3
+ [+] rejects stereo output
+ [+] rejects an out-of-range bitrate
+ [+] rejects a non-MP3 format
+ [+] rejects a non-positive duration
+ [+] accepts the lower bitrate boundary
+ [+] accepts the upper bitrate boundary
+Describing Get-Mp3Metadata
+ [+] normalizes JSON output from ffprobe
+ [+] rejects a non-zero ffprobe exit
+Tests completed in 481ms
+Passed: 12 Failed: 0 Skipped: 0 Pending: 0 Inconclusive: 0
+```
+
+No production mutation remains. The final worktree changes are limited to `audiobook/tests/Audiobook.Tests.ps1` and this report.
