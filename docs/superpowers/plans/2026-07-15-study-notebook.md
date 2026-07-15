@@ -107,8 +107,9 @@ if ($note -match '(?m)^(voice|rate):' -or $note -match '(?i)audiobook|mp3|speech
 
 $listing = [regex]::Match($note, '(?s)```python\r?\n(.*?)\r?\n```')
 if (-not $listing.Success) { throw 'Python listing is missing from the note' }
-$expected = (Get-Content -Raw -LiteralPath 'ext_04_argparse\ex04_argparse.py').Trim()
-if ($listing.Groups[1].Value.Trim() -cne $expected) {
+$actual = $listing.Groups[1].Value.Trim().Replace("`r`n", "`n")
+$expected = (Get-Content -Raw -LiteralPath 'ext_04_argparse\ex04_argparse.py').Trim().Replace("`r`n", "`n")
+if ($actual -cne $expected) {
     throw 'Notebook listing differs from ex04_argparse.py'
 }
 ```
