@@ -427,3 +427,14 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Python learning project
+.venv/
+.agents/
+__pycache__/
+*.py[cod]
+
+# Local copies and extracted text of the book are not published.
+*.pdf
+book_probe.txt
+materials/book_raw.md
