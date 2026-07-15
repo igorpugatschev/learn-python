@@ -438,3 +438,6 @@ __pycache__/
 *.pdf
 book_probe.txt
 materials/book_raw.md
+
+# Isolated feature worktrees
+.worktrees/

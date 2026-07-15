@@ -328,13 +328,52 @@ git commit -m "Add MP3 metadata validation"
 
 **Files:**
 - Create: `audiobook/scripts/render_audio.ps1`
+- Modify: `audiobook/tests/Audiobook.Tests.ps1`
 
 **Interfaces:**
 - Consumes: all exported functions from `Audiobook.psm1`.
 - CLI: `render_audio.ps1 -InputPath <md> -OutputPath <mp3> [-VoiceName 'Microsoft Irina'] [-Rate 0] [-BitRate '96k']`.
 - Produces: atomically replaced MP3 only after ffprobe validation; retains temporary diagnostics on failure.
 
-- [ ] **Step 1: Implement the rendering script**
+- [ ] **Step 1: Add a failing safe-render preflight test**
+
+Append to `audiobook/tests/Audiobook.Tests.ps1`:
+
+```powershell
+Describe 'render_audio.ps1 preflight' {
+    It 'keeps existing output when ffmpeg is unavailable' {
+        $renderPath = Join-Path $PSScriptRoot '..\scripts\render_audio.ps1'
+        $sourcePath = Join-Path $TestDrive 'source.md'
+        $outputPath = Join-Path $TestDrive 'existing.mp3'
+        Set-Content -LiteralPath $sourcePath -Value '# Тестовый текст'
+        Set-Content -LiteralPath $outputPath -Value 'sentinel'
+        $originalPath = $env:PATH
+
+        try {
+            $env:PATH = $TestDrive
+            { & $renderPath -InputPath $sourcePath -OutputPath $outputPath } |
+                Should Throw '*ffmpeg*'
+        }
+        finally {
+            $env:PATH = $originalPath
+        }
+
+        (Get-Content -Raw -LiteralPath $outputPath).Trim() | Should Be 'sentinel'
+    }
+}
+```
+
+- [ ] **Step 2: Run the focused test and verify RED**
+
+Run:
+
+```powershell
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1 -TestName 'render_audio.ps1 preflight'
+```
+
+Expected: one failed test because `render_audio.ps1` does not exist, so the expected ffmpeg preflight failure is not produced.
+
+- [ ] **Step 3: Implement the rendering script**
 
 Create `audiobook/scripts/render_audio.ps1`:
 
@@ -396,7 +435,7 @@ finally {
 }
 ```
 
-- [ ] **Step 2: Verify PowerShell syntax without generating audio**
+- [ ] **Step 4: Verify syntax and the focused test GREEN**
 
 Run:
 
@@ -409,24 +448,25 @@ $tokens = $null
     [ref]$errors
 )
 if ($errors.Count -gt 0) { $errors; exit 1 }
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1 -TestName 'render_audio.ps1 preflight'
 ```
 
-Expected: exit code 0 and no parser errors.
+Expected: exit code 0, no parser errors, and `Tests Passed: 1, Failed: 0`. The existing sentinel output remains unchanged.
 
-- [ ] **Step 3: Verify missing FFmpeg fails without creating output**
+- [ ] **Step 5: Run the complete unit suite**
 
-Run the script before installing FFmpeg with a temporary valid Markdown and dictionary from Task 4 unavailable; defer the executable integration check to Task 5. At this task boundary, verify command lookup directly:
+Run:
 
 ```powershell
-if (Get-Command ffmpeg -ErrorAction SilentlyContinue) { exit 1 }
+Invoke-Pester audiobook\tests\Audiobook.Tests.ps1
 ```
 
-Expected: exit code 0, confirming the dependency is still absent and no audio was generated.
+Expected: `Tests Passed: 7, Failed: 0`.
 
-- [ ] **Step 4: Commit Task 3**
+- [ ] **Step 6: Commit Task 3**
 
 ```powershell
-git add audiobook/scripts/render_audio.ps1
+git add audiobook/scripts/render_audio.ps1 audiobook/tests/Audiobook.Tests.ps1
 git commit -m "Add safe audiobook render command"
 ```
 
@@ -581,7 +621,7 @@ git diff --check
 git status --short
 ```
 
-Expected: six Pester tests pass; no diff errors; only Task 4 files are modified/untracked.
+Expected: seven Pester tests pass; no diff errors; only Task 4 files are modified/untracked.
 
 - [ ] **Step 6: Commit Task 4**
 
@@ -623,7 +663,7 @@ Expected: both commands report version 8.1.2 or newer.
 
 Run: `Invoke-Pester audiobook\tests\Audiobook.Tests.ps1`
 
-Expected: `Tests Passed: 6, Failed: 0`.
+Expected: `Tests Passed: 7, Failed: 0`.
 
 - [ ] **Step 3: Generate the pilot MP3**
 
