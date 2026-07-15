@@ -139,3 +139,34 @@ exit 7
             Should Throw 'ffprobe не смог проверить файл: sample.mp3'
     }
 }
+
+Describe 'render_audio.ps1 preflight' {
+    It 'keeps existing output when ffmpeg is unavailable' {
+        $renderPath = Join-Path $PSScriptRoot '..\scripts\render_audio.ps1'
+        $sourcePath = Join-Path $TestDrive 'source.md'
+        $outputPath = Join-Path $TestDrive 'existing.mp3'
+        Set-Content -LiteralPath $sourcePath -Value '# Тестовый текст'
+        Set-Content -LiteralPath $outputPath -Value 'sentinel'
+        $originalPath = $env:PATH
+        $caught = $null
+
+        try {
+            $env:PATH = $TestDrive
+            try {
+                & $renderPath -InputPath $sourcePath -OutputPath $outputPath
+            }
+            catch {
+                $caught = $_
+            }
+            if ($null -eq $caught) {
+                throw 'Expected render_audio.ps1 to fail when ffmpeg is unavailable'
+            }
+        }
+        finally {
+            $env:PATH = $originalPath
+        }
+
+        $caught.Exception.Message | Should Match '(?i)ffmpeg'
+        (Get-Content -Raw -LiteralPath $outputPath).Trim() | Should Be 'sentinel'
+    }
+}
