@@ -170,3 +170,87 @@ Describe 'render_audio.ps1 preflight' {
         (Get-Content -Raw -LiteralPath $outputPath).Trim() | Should Be 'sentinel'
     }
 }
+
+Describe 'render_audio.ps1 path and commit flow' {
+    It 'does not prepend the current directory to an absolute OutputPath' {
+        $renderPath = Join-Path $PSScriptRoot '..\scripts\render_audio.ps1'
+        $sourcePath = Join-Path $TestDrive 'source.md'
+        $outputPath = Join-Path $TestDrive 'existing.mp3'
+        Set-Content -LiteralPath $sourcePath -Value '# Тестовый текст'
+
+        . $renderPath -InputPath $sourcePath -OutputPath $outputPath
+
+        $resolvedPath = Resolve-RenderOutputPath -OutputPath ([IO.Path]::GetFullPath($outputPath))
+
+        $resolvedPath | Should Be ([IO.Path]::GetFullPath($outputPath))
+    }
+
+    It 'keeps invalid diagnostics and replaces output only after valid metadata' {
+        $renderPath = Join-Path $PSScriptRoot '..\scripts\render_audio.ps1'
+        $sourcePath = Join-Path $TestDrive 'source.md'
+        $outputPath = Join-Path $TestDrive 'existing.mp3'
+        $ffmpegPath = Join-Path $TestDrive 'ffmpeg.ps1'
+        $ffprobePath = Join-Path $TestDrive 'ffprobe.ps1'
+        Set-Content -LiteralPath $sourcePath -Value '# Тестовый текст'
+        Set-Content -LiteralPath $outputPath -Value 'sentinel'
+        @'
+param()
+Set-Content -LiteralPath $args[-1] -Value 'encoded'
+exit 0
+'@ | Set-Content -LiteralPath $ffmpegPath
+        @'
+if ($env:FAKE_FFPROBE_MODE -eq 'valid') {
+    Write-Output '{"format":{"format_name":"mp3","duration":"1.000000","bit_rate":"96000"},"streams":[{"channels":1}]}'
+}
+else {
+    Write-Output '{"format":{"format_name":"wav","duration":"1.000000","bit_rate":"96000"},"streams":[{"channels":1}]}'
+}
+exit 0
+'@ | Set-Content -LiteralPath $ffprobePath
+
+        . $renderPath -InputPath $sourcePath -OutputPath $outputPath
+        $originalPath = $env:PATH
+        $originalProbeMode = $env:FAKE_FFPROBE_MODE
+        $invalidCaught = $null
+
+        try {
+            $env:PATH = $TestDrive
+            $env:FAKE_FFPROBE_MODE = 'invalid'
+            try {
+                Invoke-RenderAudio -InputPath $sourcePath -OutputPath $outputPath `
+                    -Pronunciation @{} -Synthesize {
+                        param($WavPath)
+                        Set-Content -LiteralPath $WavPath -Value 'wav'
+                    }
+            }
+            catch {
+                $invalidCaught = $_
+            }
+
+            if ($null -eq $invalidCaught) {
+                throw 'Expected invalid metadata to stop before replacing output'
+            }
+            $invalidCaught.Exception.Message | Should Match '(?i)MP3|format'
+            (Get-Content -Raw -LiteralPath $outputPath).Trim() | Should Be 'sentinel'
+
+            $diagnostics = @(Get-ChildItem -LiteralPath $TestDrive -Filter '.render-*.mp3')
+            $diagnostics.Count | Should Be 1
+            (Get-Content -Raw -LiteralPath $diagnostics[0].FullName).Trim() | Should Be 'encoded'
+
+            $env:FAKE_FFPROBE_MODE = 'valid'
+            Invoke-RenderAudio -InputPath $sourcePath -OutputPath $outputPath `
+                -Pronunciation @{} -Synthesize {
+                    param($WavPath)
+                    Set-Content -LiteralPath $WavPath -Value 'wav'
+                }
+
+            (Get-Content -Raw -LiteralPath $outputPath).Trim() | Should Be 'encoded'
+            $diagnostics = @(Get-ChildItem -LiteralPath $TestDrive -Filter '.render-*.mp3')
+            $diagnostics.Count | Should Be 1
+        }
+        finally {
+            $env:PATH = $originalPath
+            $env:FAKE_FFPROBE_MODE = $originalProbeMode
+        }
+    }
+}

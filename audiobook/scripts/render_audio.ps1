@@ -9,36 +9,86 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'Audiobook.psm1') -Force
+$script:RenderScriptRoot = $PSScriptRoot
 
-$inputFile = (Resolve-Path -LiteralPath $InputPath).Path
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$dictionaryPath = Join-Path $repoRoot 'audiobook\pronunciation.json'
-$tmpDir = Join-Path $repoRoot 'audiobook\tmp'
-$outputFile = [IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputPath))
-$outputDir = Split-Path -Parent $outputFile
-$token = [guid]::NewGuid().ToString('N')
-$wavPath = Join-Path $tmpDir "$token.wav"
-$temporaryMp3 = Join-Path $tmpDir "$token.mp3"
+function Resolve-RenderOutputPath {
+    param([Parameter(Mandatory)][string]$OutputPath)
 
-$ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
-$ffprobe = (Get-Command ffprobe -ErrorAction Stop).Source
-$markdown = Get-Content -Raw -LiteralPath $inputFile
-$pronunciation = Get-PronunciationMap -Path $dictionaryPath
-$narration = ConvertFrom-AudiobookMarkdown -Markdown $markdown -Pronunciation $pronunciation
+    if ([IO.Path]::IsPathFullyQualified($OutputPath)) {
+        return [IO.Path]::GetFullPath($OutputPath)
+    }
+    return [IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputPath))
+}
 
-New-Item -ItemType Directory -Force -Path $tmpDir, $outputDir | Out-Null
-Add-Type -AssemblyName System.Speech
-$synth = [System.Speech.Synthesis.SpeechSynthesizer]::new()
+function Write-AudiobookWave {
+    param(
+        [Parameter(Mandatory)][string]$Narration,
+        [Parameter(Mandatory)][string]$WavPath,
+        [Parameter(Mandatory)][string]$VoiceName,
+        [Parameter(Mandatory)][int]$Rate,
+        [scriptblock]$Synthesize
+    )
 
-try {
-    $availableVoices = $synth.GetInstalledVoices().VoiceInfo.Name
-    if ($VoiceName -notin $availableVoices) { throw "Не найден голос: $VoiceName" }
-    $synth.SelectVoice($VoiceName)
-    $synth.Rate = $Rate
-    $synth.SetOutputToWaveFile($wavPath)
-    $synth.Speak($narration)
-    $synth.SetOutputToDefaultAudioDevice()
+    if ($null -ne $Synthesize) {
+        & $Synthesize $WavPath
+        return
+    }
+
+    Add-Type -AssemblyName System.Speech
+    $synth = [System.Speech.Synthesis.SpeechSynthesizer]::new()
+    try {
+        $availableVoices = $synth.GetInstalledVoices().VoiceInfo.Name
+        if ($VoiceName -notin $availableVoices) { throw "Не найден голос: $VoiceName" }
+        $synth.SelectVoice($VoiceName)
+        $synth.Rate = $Rate
+        $synth.SetOutputToWaveFile($WavPath)
+        $synth.Speak($Narration)
+        $synth.SetOutputToDefaultAudioDevice()
+    }
+    finally {
+        $synth.Dispose()
+    }
+}
+
+function Invoke-RenderAudio {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$InputPath,
+        [Parameter(Mandatory)][string]$OutputPath,
+        [string]$VoiceName = 'Microsoft Irina',
+        [ValidateRange(-10, 10)][int]$Rate = 0,
+        [ValidatePattern('^96k$')][string]$BitRate = '96k',
+        [hashtable]$Pronunciation,
+        [scriptblock]$Synthesize
+    )
+
+    Import-Module (Join-Path $script:RenderScriptRoot 'Audiobook.psm1') -Force
+
+    $inputFile = (Resolve-Path -LiteralPath $InputPath).Path
+    $repoRoot = (Resolve-Path (Join-Path $script:RenderScriptRoot '..\..')).Path
+    $dictionaryPath = Join-Path $repoRoot 'audiobook\pronunciation.json'
+    $tmpDir = Join-Path $repoRoot 'audiobook\tmp'
+    $outputFile = Resolve-RenderOutputPath -OutputPath $OutputPath
+    $outputDir = Split-Path -Parent $outputFile
+    $token = [guid]::NewGuid().ToString('N')
+    $wavPath = Join-Path $tmpDir "$token.wav"
+
+    $ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
+    $ffprobe = (Get-Command ffprobe -ErrorAction Stop).Source
+    $markdown = Get-Content -Raw -LiteralPath $inputFile
+    if ($PSBoundParameters.ContainsKey('Pronunciation')) {
+        $pronunciationMap = $Pronunciation
+    }
+    else {
+        $pronunciationMap = Get-PronunciationMap -Path $dictionaryPath
+    }
+    $narration = ConvertFrom-AudiobookMarkdown -Markdown $markdown -Pronunciation $pronunciationMap
+
+    New-Item -ItemType Directory -Force -Path $tmpDir, $outputDir | Out-Null
+    $temporaryMp3 = Join-Path $outputDir ".render-$token.mp3"
+
+    Write-AudiobookWave -Narration $narration -WavPath $wavPath -VoiceName $VoiceName `
+        -Rate $Rate -Synthesize $Synthesize
 
     & $ffmpeg -hide_banner -loglevel error -y -i $wavPath -codec:a libmp3lame `
         -ac 1 -b:a $BitRate $temporaryMp3
@@ -50,6 +100,8 @@ try {
     Remove-Item -Force -LiteralPath $wavPath
     Write-Host "Создан файл: $outputFile"
 }
-finally {
-    $synth.Dispose()
+
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-RenderAudio -InputPath $InputPath -OutputPath $OutputPath -VoiceName $VoiceName `
+        -Rate $Rate -BitRate $BitRate
 }
